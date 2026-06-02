@@ -127,17 +127,23 @@ def build_rent_url(slug: str, page: int = 1) -> str:
         return f"{BASE_URL}/rent/{slug}"
     return f"{BASE_URL}/rent/{slug}?page={page}"
 
-def safe_get(url: str, retries: int = 3) -> requests.Response | None:
-    for attempt in range(retries):
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=20)
-            if r.status_code == 200:
-                return r
-            if r.status_code == 429:
-                time.sleep(5 + attempt * 3)
-        except requests.RequestException:
-            time.sleep(2)
-        time.sleep(1.2 + random.random())
+def safe_get(url: str):
+    try:
+        import streamlit as st
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        
+        # Temporary Diagnostic Output visible on your app screen
+        st.info(f"🌐 Server Response Code for URL: {resp.status_code}")
+        
+        if resp.status_code == 403:
+            st.error("🚫 Access Blocked (403 Forbidden): SPEEDHOME's firewall is blocking this server's IP address.")
+        elif resp.status_code == 503:
+            st.error("🛡️ Cloudflare Wall (503): The site is requiring a browser captcha/challenge.")
+            
+        if resp.status_code == 200:
+            return resp
+    except Exception as e:
+        st.error(f"Connection Error: {e}")
     return None
 
 def parse_price(text: str) -> float | None:
