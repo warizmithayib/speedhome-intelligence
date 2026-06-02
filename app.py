@@ -191,24 +191,25 @@ def detect_furnishing(title: str, desc: str = "") -> str:
 def parse_listing_card(card, base_url=BASE_URL) -> dict | None:
     """Extract data from a single listing card element."""
     try:
-        # Title
+        # Title - Fallback to the link text if headers are scrambled
         title_el = (
             card.select_one("h2")
             or card.select_one("h3")
             or card.select_one(".listing-title")
             or card.select_one("[class*='title']")
-            or card.select_one("a[href*='/rent/']")
         )
-        title = title_el.get_text(strip=True) if title_el else ""
+        link_el = card.select_one("a[href*='/rent/']") or card.select_one("a")
+        
+        title = title_el.get_text(strip=True) if title_el else (link_el.get_text(strip=True) if link_el else "")
 
         # Link
-        link_el = card.select_one("a[href*='/rent/']") or card.select_one("a")
         href = link_el["href"] if link_el and link_el.get("href") else ""
         if href and not href.startswith("http"):
             href = urljoin(base_url, href)
 
-        # Price — look for RM pattern anywhere in card text
         card_text = card.get_text(" ", strip=True)
+        
+        # Price
         price = None
         price_text = ""
         price_m = re.search(
@@ -219,7 +220,7 @@ def parse_listing_card(card, base_url=BASE_URL) -> dict | None:
             price = float(price_m.group(1).replace(",", ""))
             price_text = price_m.group(0)
 
-        # Detect rent type from surrounding text
+        # Detect rent type
         rent_type = "Monthly"
         lower_text = card_text.lower()
         if any(k in lower_text for k in ["per day", "/day", "nightly", "daily"]):
@@ -227,18 +228,17 @@ def parse_listing_card(card, base_url=BASE_URL) -> dict | None:
         elif any(k in lower_text for k in ["per year", "/year", "annually", "yearly"]):
             rent_type = "Yearly"
 
-        # Beds / sqft
-        beds_m = re.search(r"(\d+)\s*(?:bed|br|room)", card_text, re.IGNORECASE)
+        # Beds / sqft - UPDATED to handle emojis from new UI
+        beds_m = re.search(r"(\d+)\s*(?:bed|br|room|🛌|🛏️)", card_text, re.IGNORECASE)
         beds = beds_m.group(0) if beds_m else ""
 
         sqft_m = re.search(r"([\d,]+)\s*(?:sq\.?\s*ft|sqft)", card_text, re.IGNORECASE)
         sqft = float(sqft_m.group(1).replace(",", "")) if sqft_m else None
 
-        # Room type & furnishing
+        # Area and Furnishing
         room_type = detect_room_type(title, beds)
         furnishing = detect_furnishing(title, card_text)
 
-        # Area
         area_el = card.select_one("[class*='location']") or card.select_one("[class*='area']")
         area = area_el.get_text(strip=True) if area_el else ""
 
@@ -373,29 +373,26 @@ def scrape_page(url: str) -> tuple[list[dict], str | None]:
     # 1) Try Next.js data first
     listings = extract_from_next_data(soup)
 
-    # 2) Fall back to HTML card parsing
+    # 2) Fall back to HTML card parsing - UPDATED LOGIC
     if not listings:
-        selectors = [
-            "[class*='listing-card']",
-            "[class*='property-card']",
-            "[class*='PropertyCard']",
-            "[class*='ListingCard']",
-            "[class*='listing-item']",
-            "[class*='property-item']",
-            "article",
-        ]
         cards = []
-        for sel in selectors:
-            cards = soup.select(sel)
-            if cards:
-                break
+        # Find every anchor tag that links to a specific rental unit
+        rent_links = soup.find_all("a", href=re.compile(r"/rent/[^?]+"))
+        
+        for link in rent_links:
+            # Look for the closest wrapper div that acts as the "card"
+            parent_card = link.find_parent("div")
+            # Ensure we haven't already processed this container and that it actually contains text
+            if parent_card and parent_card not in cards:
+                if len(parent_card.get_text(strip=True)) > 20: 
+                    cards.append(parent_card)
 
         for card in cards:
             item = parse_listing_card(card)
             if item:
                 listings.append(item)
 
-    # 3) Find next page link
+    # 3) Find next page link (Keep your existing pagination logic here)
     next_url = None
     next_el = (
         soup.select_one("a[rel='next']")
@@ -403,10 +400,6 @@ def scrape_page(url: str) -> tuple[list[dict], str | None]:
         or soup.select_one("[aria-label='Next page']")
         or soup.select_one("[aria-label='next']")
     )
-    if next_el and next_el.get("href"):
-        href = next_el["href"]
-        next_url = href if href.startswith("http") else urljoin(BASE_URL, href)
-
     # Also check for numbered pagination
     if not next_url:
         page_m = re.search(r"[?&]page=(\d+)", url)
