@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import time
 import io
+import urllib.parse
 from datetime import datetime
 from statistics import median, mode, mean
 import random
@@ -112,25 +113,81 @@ _BUILD_ID: str | None = None
 
 # ── Core helpers ───────────────────────────────────────────────────────────────
 
-def safe_get(url: str, headers: dict, timeout: int = 15):
+class MockResponse:
+    """Mock standard Response object to format proxy-extracted payloads correctly."""
+    def __init__(self, text: str, status_code: int):
+        self.text = text
+        self.status_code = status_code
+        
+    def json(self):
+        import json
+        return json.loads(self.text)
+
+def safe_get(url: str, headers: dict, timeout: int = 15, use_proxy: bool = False):
     """
-    Robust GET request wrapper. 
-    Attempts using curl_cffi with Chrome impersonation first,
-    then falls back to Python's standard requests module if curl_cffi raises an exception.
+    Robust GET request wrapper.
+    1. If use_proxy is True, route through a CORS proxy immediately.
+    2. Try curl_cffi with Chrome impersonation directly.
+    3. Fall back to standard requests directly.
+    4. If direct requests return a 403 (Cloudflare block), automatically fall back to CORS proxies.
     """
-    # 1. Attempt using curl_cffi
+    def route_through_proxy(target_url, proxy_index=0):
+        encoded_url = urllib.parse.quote(target_url, safe="")
+        proxies = [
+            f"https://corsproxy.io/?{target_url}",
+            f"https://api.allorigins.win/get?url={encoded_url}",
+            f"https://api.codetabs.com/v1/proxy?quest={encoded_url}"
+        ]
+        return proxies[proxy_index]
+
+    if use_proxy:
+        for idx in range(3):
+            try:
+                proxy_url = route_through_proxy(url, idx)
+                r = standard_requests.get(proxy_url, timeout=timeout)
+                if r.status_code == 200:
+                    if idx == 1:  # allorigins returns wrapped JSON
+                        data = r.json()
+                        contents = data.get("contents", "")
+                        return MockResponse(contents, 200)
+                    return r
+            except Exception as e:
+                st.session_state["last_fetch_error"] = f"Proxy fallback {idx} failed: {e}"
+        raise Exception("All fallback proxies failed to retrieve the page data.")
+
+    # 1. Direct attempt: curl_cffi
     try:
         from curl_cffi import requests as curl_requests
-        return curl_requests.get(url, headers=headers, timeout=timeout, impersonate="chrome")
-    except Exception as e:
-        st.session_state["last_fetch_error"] = f"curl_cffi failed ({e}). Attempting standard requests fallback..."
+        
+        # Ensure standard event loop is configured inside Streamlit worker threads
+        try:
+            import asyncio
+            asyncio.get_event_loop()
+        except RuntimeError:
+            import asyncio
+            asyncio.set_event_loop(asyncio.new_event_loop())
 
-    # 2. Fallback to standard requests library
-    try:
-        return standard_requests.get(url, headers=headers, timeout=timeout)
+        r = curl_requests.get(url, headers=headers, timeout=timeout, impersonate="chrome")
+        if r.status_code == 200:
+            return r
+        elif r.status_code == 403:
+            st.session_state["last_fetch_error"] = "curl_cffi direct request blocked (403). Trying standard requests..."
     except Exception as e:
-        st.session_state["last_fetch_error"] = f"Standard requests fallback failed: {e}"
-        raise e
+        st.session_state["last_fetch_error"] = f"curl_cffi direct request failed ({e}). Trying standard requests..."
+
+    # 2. Direct attempt: standard requests
+    try:
+        r = standard_requests.get(url, headers=headers, timeout=timeout)
+        if r.status_code == 200:
+            return r
+        elif r.status_code == 403:
+            st.session_state["last_fetch_error"] = "Standard direct request was blocked with 403. Switching to proxy fallback..."
+    except Exception as e:
+        st.session_state["last_fetch_error"] = f"Standard direct request failed ({e}). Switching to proxy fallback..."
+
+    # 3. Both direct attempts failed or got blocked -> Route through proxy
+    st.info("🔄 Direct connection restricted by Cloudflare. Routing request through a secure web proxy...")
+    return safe_get(url, headers, timeout=timeout, use_proxy=True)
 
 def slugify(text: str) -> str:
     text = text.lower().strip()
