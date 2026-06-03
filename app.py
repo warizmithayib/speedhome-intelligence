@@ -1,5 +1,4 @@
 import streamlit as st
-from curl_cffi import requests
 import pandas as pd
 import re
 import time
@@ -8,6 +7,9 @@ from datetime import datetime
 from statistics import median, mode, mean
 import random
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+
+# Fallback import for standard requests
+import requests as standard_requests
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -110,6 +112,26 @@ _BUILD_ID: str | None = None
 
 # ── Core helpers ───────────────────────────────────────────────────────────────
 
+def safe_get(url: str, headers: dict, timeout: int = 15):
+    """
+    Robust GET request wrapper. 
+    Attempts using curl_cffi with Chrome impersonation first,
+    then falls back to Python's standard requests module if curl_cffi raises an exception.
+    """
+    # 1. Attempt using curl_cffi
+    try:
+        from curl_cffi import requests as curl_requests
+        return curl_requests.get(url, headers=headers, timeout=timeout, impersonate="chrome")
+    except Exception as e:
+        st.session_state["last_fetch_error"] = f"curl_cffi failed ({e}). Attempting standard requests fallback..."
+
+    # 2. Fallback to standard requests library
+    try:
+        return standard_requests.get(url, headers=headers, timeout=timeout)
+    except Exception as e:
+        st.session_state["last_fetch_error"] = f"Standard requests fallback failed: {e}"
+        raise e
+
 def slugify(text: str) -> str:
     text = text.lower().strip()
     text = re.sub(r"[^a-z0-9\s-]", "", text)
@@ -134,14 +156,18 @@ def get_build_id() -> str | None:
     if _BUILD_ID:
         return _BUILD_ID
     try:
-        r = requests.get("https://speedhome.com/", headers=HEADERS_HTML, timeout=15, impersonate="chrome")
+        r = safe_get("https://speedhome.com/", headers=HEADERS_HTML, timeout=15)
         if r.status_code == 200:
             m = re.search(r'"buildId"\s*:\s*"([^"]+)"', r.text)
             if m:
                 _BUILD_ID = m.group(1)
                 return _BUILD_ID
-    except Exception:
-        pass
+            else:
+                st.session_state["last_fetch_error"] = f"Failed to locate 'buildId' in page HTML. Status: {r.status_code}"
+        else:
+            st.session_state["last_fetch_error"] = f"Homepage request returned status code: {r.status_code}"
+    except Exception as e:
+        st.session_state["last_fetch_error"] = f"Failed to connect: {e}"
     return None
 
 def fetch_next_data(slug: str, page: int = 1, build_id: str = None) -> dict | None:
@@ -155,11 +181,13 @@ def fetch_next_data(slug: str, page: int = 1, build_id: str = None) -> dict | No
     if page > 1:
         url += f"?page={page}"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20, impersonate="chrome")
+        r = safe_get(url, headers=HEADERS, timeout=20)
         if r.status_code == 200:
             return r.json().get("pageProps", {})
+        st.session_state["last_fetch_error"] = f"Listing API returned status code {r.status_code} on page {page}"
         return None
-    except Exception:
+    except Exception as e:
+        st.session_state["last_fetch_error"] = f"Listing request failed: {e}"
         return None
 
 def normalize_listing(item: dict) -> dict:
@@ -205,7 +233,10 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
 
     build_id = get_build_id()
     if not build_id:
-        return [], ["❌ Could not fetch SPEEDHOME build ID. Check your internet connection."]
+        error_msg = "❌ Could not fetch SPEEDHOME build ID. Check your internet connection."
+        if "last_fetch_error" in st.session_state:
+            error_msg += f" (Diagnostics: {st.session_state['last_fetch_error']})"
+        return [], [error_msg]
 
     if progress_cb:
         progress_cb(f"✅ Build ID: {build_id}")
@@ -218,7 +249,10 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
         props = fetch_next_data(slug, page=page, build_id=build_id)
 
         if props is None:
-            errors.append(f"❌ Page {page}: Failed to fetch — the area slug may be incorrect or the page doesn't exist.")
+            error_msg = f"❌ Page {page}: Failed to fetch — the area slug may be incorrect, or the cloud IP is rate-limited."
+            if "last_fetch_error" in st.session_state:
+                error_msg += f" (Detail: {st.session_state['last_fetch_error']})"
+            errors.append(error_msg)
             break
 
         prop_list = props.get("propertyList", {})
