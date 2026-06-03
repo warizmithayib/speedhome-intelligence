@@ -1,0 +1,8 @@
+[1]
+Why it didn't work before — the short version:
+There were three sequential problems:
+
+1. Playwright ran but returned empty HTML — SPEEDHOME's listing page is a React app. When Playwright fetched it with wait_until="domcontentloaded", React hadn't finished rendering yet. The HTML shell loaded but the listing cards were still empty divs. Our CSS selectors found nothing.
+2. API calls returned 405 and 401 — The search endpoint speedhome.com/api/properties/search requires a POST request with lat/lon in the body (not GET with area name). The autocomplete endpoint api.speedrent.com requires a JWT auth token. Both were blocked without a proper browser session.
+3. Fixed by using /_next/data/{buildId}/en/rent/{slug}.json — This is Next.js's server-side rendering data endpoint. It's called by the browser on every page load, requires no auth, returns pure JSON with all listing data pre-rendered on the server. Your debug_api2.py confirmed it returns HTTP 200 with 757KB of clean data. This is the correct and stable approach.
+

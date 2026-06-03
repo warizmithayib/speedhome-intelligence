@@ -1,0 +1,14 @@
+[SDLC Waterfall Solo-AI Assisted]
+
+1. Planning/Requirements: scope and limitations from target website and streamlit UI
+2. System Design (UI): CSS frontend
+3. Implementation Design: core features
+4. Implementation DataOps: API calls debug
+5. Implementation DataOps: data fetching/scraping/parsing debug
+6. Iterative Dev: extra features
+7. Testing & UX: localhost testing and debug
+8. Documentation / Version Control: readme.md and git repository
+-. UAT: skip, tester validates on live app
+9. Deployment: streamlit release
+10. User Documentation : how to use pdf doc
+-. Maintenance / Monitoring: skip

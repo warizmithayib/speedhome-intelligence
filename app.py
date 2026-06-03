@@ -1,15 +1,13 @@
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
+from curl_cffi import requests
 import pandas as pd
-import json
 import re
 import time
 import io
 from datetime import datetime
 from statistics import median, mode, mean
-from urllib.parse import quote, urljoin
 import random
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -76,20 +74,17 @@ div[data-testid="stDataFrame"] { border-radius:10px; overflow:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Constants ──────────────────────────────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
 BASE_URL = "https://speedhome.com"
+
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
     "Referer": "https://speedhome.com/",
 }
+
+HEADERS_HTML = {**HEADERS, "Accept": "text/html,application/xhtml+xml,*/*"}
 
 POPULAR_AREAS = [
     "Mont Kiara", "Mont Kiara Aman", "Mont Kiara Bayu", "Mont Kiara Damai",
@@ -103,11 +98,17 @@ POPULAR_AREAS = [
     "Pavilion Residences", "The Troika", "Solaris Mont Kiara",
 ]
 
-AREA_TO_SLUG = {
-    name: name.lower().replace(" ", "-") for name in POPULAR_AREAS
+FURNISH_MAP = {
+    "FULL": "Fully Furnished",
+    "PARTIAL": "Partially Furnished",
+    "UNFURNISHED": "Unfurnished",
+    "NONE": "Unfurnished",
 }
 
-# ── Scraping helpers ───────────────────────────────────────────────────────────
+# Cached build ID so we only fetch it once per session
+_BUILD_ID: str | None = None
+
+# ── Core helpers ───────────────────────────────────────────────────────────────
 
 def slugify(text: str) -> str:
     text = text.lower().strip()
@@ -118,340 +119,150 @@ def slugify(text: str) -> str:
 def extract_slug_from_url(url: str) -> str:
     url = url.strip()
     m = re.search(r"speedhome\.com/rent/([^/?#]+)", url)
-    if m:
-        return m.group(1)
-    return None
+    return m.group(1) if m else None
 
-def build_rent_url(slug: str, page: int = 1) -> str:
-    if page == 1:
-        return f"{BASE_URL}/rent/{slug}"
-    return f"{BASE_URL}/rent/{slug}?page={page}"
-
-def safe_get(url: str):
+def detect_room_type(bedroom_count) -> str:
     try:
-        import streamlit as st
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        
-        # Temporary Diagnostic Output visible on your app screen
-        st.info(f"🌐 Server Response Code for URL: {resp.status_code}")
-        
-        if resp.status_code == 403:
-            st.error("🚫 Access Blocked (403 Forbidden): SPEEDHOME's firewall is blocking this server's IP address.")
-        elif resp.status_code == 503:
-            st.error("🛡️ Cloudflare Wall (503): The site is requiring a browser captcha/challenge.")
-            
-        if resp.status_code == 200:
-            return resp
-    except Exception as e:
-        st.error(f"Connection Error: {e}")
-    return None
+        n = int(bedroom_count)
+        return "Studio" if n == 0 else f"{n}BR"
+    except (TypeError, ValueError):
+        return "Unknown"
 
-def parse_price(text: str) -> float | None:
-    if not text:
-        return None
-    text = text.replace(",", "").replace("RM", "").strip()
-    m = re.search(r"[\d.]+", text)
-    if m:
-        try:
-            return float(m.group())
-        except ValueError:
-            pass
-    return None
-
-def parse_sqft(text: str) -> float | None:
-    if not text:
-        return None
-    m = re.search(r"([\d,]+)\s*(?:sq\.?\s*ft|sqft)", text, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1).replace(",", ""))
-        except ValueError:
-            pass
-    return None
-
-def detect_room_type(title: str, beds: str) -> str:
-    t = (title + " " + (beds or "")).lower()
-    if "studio" in t:
-        return "Studio"
-    for n in ["1", "2", "3", "4", "5"]:
-        if (
-            f"{n} bed" in t
-            or f"{n}br" in t
-            or f"{n} br" in t
-            or f"{n} room" in t
-            or f"{n}+1" in t
-        ):
-            return f"{n}BR"
-    return "Unknown"
-
-def detect_furnishing(title: str, desc: str = "") -> str:
-    t = (title + " " + (desc or "")).lower()
-    if "fully furnished" in t or "full furnished" in t:
-        return "Fully Furnished"
-    if "partially furnished" in t or "partial furnished" in t or "semi furnished" in t:
-        return "Partially Furnished"
-    if "unfurnished" in t or "bare" in t:
-        return "Unfurnished"
-    return "Not Specified"
-
-def parse_listing_card(card, base_url=BASE_URL) -> dict | None:
-    """Extract data from a single listing card element."""
+def get_build_id() -> str | None:
+    """Fetch the Next.js build ID from the SPEEDHOME homepage. Cached per session."""
+    global _BUILD_ID
+    if _BUILD_ID:
+        return _BUILD_ID
     try:
-        # Title - Fallback to the link text if headers are scrambled
-        title_el = (
-            card.select_one("h2")
-            or card.select_one("h3")
-            or card.select_one(".listing-title")
-            or card.select_one("[class*='title']")
-        )
-        link_el = card.select_one("a[href*='/rent/']") or card.select_one("a")
-        
-        title = title_el.get_text(strip=True) if title_el else (link_el.get_text(strip=True) if link_el else "")
-
-        # Link
-        href = link_el["href"] if link_el and link_el.get("href") else ""
-        if href and not href.startswith("http"):
-            href = urljoin(base_url, href)
-
-        card_text = card.get_text(" ", strip=True)
-        
-        # Price
-        price = None
-        price_text = ""
-        price_m = re.search(
-            r"RM\s*([\d,]+(?:\.\d+)?)\s*(?:/\s*(?:month|mo|mth|year|yr|day|night))?",
-            card_text, re.IGNORECASE
-        )
-        if price_m:
-            price = float(price_m.group(1).replace(",", ""))
-            price_text = price_m.group(0)
-
-        # Detect rent type
-        rent_type = "Monthly"
-        lower_text = card_text.lower()
-        if any(k in lower_text for k in ["per day", "/day", "nightly", "daily"]):
-            rent_type = "Daily"
-        elif any(k in lower_text for k in ["per year", "/year", "annually", "yearly"]):
-            rent_type = "Yearly"
-
-        # Beds / sqft - UPDATED to handle emojis from new UI
-        beds_m = re.search(r"(\d+)\s*(?:bed|br|room|🛌|🛏️)", card_text, re.IGNORECASE)
-        beds = beds_m.group(0) if beds_m else ""
-
-        sqft_m = re.search(r"([\d,]+)\s*(?:sq\.?\s*ft|sqft)", card_text, re.IGNORECASE)
-        sqft = float(sqft_m.group(1).replace(",", "")) if sqft_m else None
-
-        # Area and Furnishing
-        room_type = detect_room_type(title, beds)
-        furnishing = detect_furnishing(title, card_text)
-
-        area_el = card.select_one("[class*='location']") or card.select_one("[class*='area']")
-        area = area_el.get_text(strip=True) if area_el else ""
-
-        if not title and not price:
-            return None
-
-        return {
-            "title": title,
-            "area": area,
-            "room_type": room_type,
-            "furnishing": furnishing,
-            "price_monthly": price if rent_type == "Monthly" else None,
-            "price_daily": price if rent_type == "Daily" else None,
-            "price_yearly": price if rent_type == "Yearly" else None,
-            "sqft": sqft,
-            "rent_type": rent_type,
-            "link": href,
-            "_raw_price_text": price_text,
-        }
-    except Exception:
-        return None
-
-
-def extract_from_next_data(soup) -> list[dict]:
-    """Try to pull listings from Next.js __NEXT_DATA__ JSON blob."""
-    listings = []
-    script = soup.find("script", {"id": "__NEXT_DATA__"})
-    if not script:
-        return listings
-    try:
-        data = json.loads(script.string)
-        # Walk the JSON tree looking for arrays that look like listings
-        raw_str = json.dumps(data)
-        # Look for objects with price/rent fields
-        # Common SPEEDHOME keys
-        for key in ["listings", "properties", "units", "items", "data", "results"]:
-            found = _find_key(data, key)
-            if found and isinstance(found, list) and len(found) > 0:
-                for item in found:
-                    if isinstance(item, dict):
-                        listing = _normalize_json_listing(item)
-                        if listing:
-                            listings.append(listing)
-                if listings:
-                    break
+        r = requests.get("https://speedhome.com/", headers=HEADERS_HTML, timeout=15, impersonate="chrome")
+        if r.status_code == 200:
+            m = re.search(r'"buildId"\s*:\s*"([^"]+)"', r.text)
+            if m:
+                _BUILD_ID = m.group(1)
+                return _BUILD_ID
     except Exception:
         pass
-    return listings
-
-
-def _find_key(obj, key):
-    if isinstance(obj, dict):
-        if key in obj:
-            return obj[key]
-        for v in obj.values():
-            result = _find_key(v, key)
-            if result is not None:
-                return result
-    elif isinstance(obj, list):
-        for item in obj:
-            result = _find_key(item, key)
-            if result is not None:
-                return result
     return None
 
-
-def _normalize_json_listing(item: dict) -> dict | None:
-    """Try common field names to normalize a JSON listing object."""
-    title = (
-        item.get("title") or item.get("name") or item.get("propertyName")
-        or item.get("listing_title") or ""
-    )
-    price_raw = (
-        item.get("price") or item.get("rental_price") or item.get("asking_price")
-        or item.get("monthly_price") or item.get("rent") or 0
-    )
+def fetch_next_data(slug: str, page: int = 1, build_id: str = None) -> dict | None:
+    """
+    Fetch listings via Next.js SSR data endpoint.
+    Returns parsed pageProps dict or None on failure.
+    """
+    if not build_id:
+        return None
+    url = f"https://speedhome.com/_next/data/{build_id}/en/rent/{slug}.json"
+    if page > 1:
+        url += f"?page={page}"
     try:
-        price = float(str(price_raw).replace(",", "").replace("RM", "").strip())
+        r = requests.get(url, headers=HEADERS, timeout=20, impersonate="chrome")
+        if r.status_code == 200:
+            return r.json().get("pageProps", {})
+        return None
     except Exception:
-        price = None
-
-    sqft_raw = (
-        item.get("size") or item.get("sqft") or item.get("floor_area")
-        or item.get("built_up") or None
-    )
-    try:
-        sqft = float(str(sqft_raw).replace(",", "").strip()) if sqft_raw else None
-    except Exception:
-        sqft = None
-
-    beds_raw = str(
-        item.get("bedrooms") or item.get("bedroom") or item.get("beds")
-        or item.get("room") or ""
-    )
-    furnishing = item.get("furnished") or item.get("furnishing") or ""
-    area = (
-        item.get("area") or item.get("location") or item.get("district")
-        or item.get("neighborhood") or ""
-    )
-    slug = item.get("slug") or item.get("url") or item.get("path") or ""
-    link = f"{BASE_URL}/rent/{slug}" if slug and not slug.startswith("http") else slug
-
-    if not title and not price:
         return None
 
-    room_type = detect_room_type(title, beds_raw)
-    furn_label = detect_furnishing(title, furnishing)
+def normalize_listing(item: dict) -> dict:
+    """Convert a raw API property object to our standard format."""
+    ref  = item.get("ref", "")
+    name = item.get("name", "")
+    bedroom  = item.get("bedroom", 0)
+    price    = item.get("price")
+    sqft     = item.get("sqft")
+    furnish_raw = item.get("furnishType", "")
+    furnishing  = FURNISH_MAP.get(furnish_raw, furnish_raw.title() if furnish_raw else "Not Specified")
+
+    addr_parts = [p.strip() for p in (item.get("address") or "").split(",") if p.strip() and not re.match(r"^\d", p.strip())]
+    area = addr_parts[-2] if len(addr_parts) >= 2 else (addr_parts[-1] if addr_parts else name)
+
+    # Correct URL format: https://speedhome.com/details/slugified-name-ref
+    link = f"{BASE_URL}/details/{slugify(name)}-{ref}" if ref else ""
 
     return {
-        "title": str(title),
-        "area": str(area),
-        "room_type": room_type,
-        "furnishing": furn_label,
-        "price_monthly": price,
+        "title": name,
+        "area": area,
+        "room_type": detect_room_type(bedroom),
+        "furnishing": furnishing,
+        "price_monthly": float(price) if price else None,
         "price_daily": None,
         "price_yearly": None,
-        "sqft": sqft,
+        "sqft": float(sqft) if sqft else None,
         "rent_type": "Monthly",
         "link": link,
-        "_raw_price_text": f"RM {price}",
+        "bedroom": bedroom,
+        "bathroom": item.get("bathroom"),
+        "carpark": item.get("carpark"),
+        "no_deposit": item.get("noDeposit", False),
     }
 
-
-def scrape_page(url: str) -> tuple[list[dict], str | None]:
-    """Scrape one page, return (listings, next_page_url)."""
-    resp = safe_get(url)
-    if not resp:
-        return [], None
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # 1) Try Next.js data first
-    listings = extract_from_next_data(soup)
-
-    # 2) Fall back to HTML card parsing - UPDATED LOGIC
-    if not listings:
-        cards = []
-        # Find every anchor tag that links to a specific rental unit
-        rent_links = soup.find_all("a", href=re.compile(r"/rent/[^?]+"))
-        
-        for link in rent_links:
-            # Look for the closest wrapper div that acts as the "card"
-            parent_card = link.find_parent("div")
-            # Ensure we haven't already processed this container and that it actually contains text
-            if parent_card and parent_card not in cards:
-                if len(parent_card.get_text(strip=True)) > 20: 
-                    cards.append(parent_card)
-
-        for card in cards:
-            item = parse_listing_card(card)
-            if item:
-                listings.append(item)
-
-    # 3) Find next page link (Keep your existing pagination logic here)
-    next_url = None
-    next_el = (
-        soup.select_one("a[rel='next']")
-        or soup.select_one("[class*='next'] a")
-        or soup.select_one("[aria-label='Next page']")
-        or soup.select_one("[aria-label='next']")
-    )
-    # Also check for numbered pagination
-    if not next_url:
-        page_m = re.search(r"[?&]page=(\d+)", url)
-        current_page = int(page_m.group(1)) if page_m else 1
-        # Check if there are more pages via meta or script hints
-        total_hint = re.search(r'"totalPage[s]?":\s*(\d+)', resp.text)
-        if total_hint and current_page < int(total_hint.group(1)):
-            sep = "&" if "?" in url else "?"
-            next_url = f"{url.split('?')[0]}?page={current_page + 1}"
-
-    return listings, next_url
-
-
-def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> list[dict]:
-    """Fetch up to max_pages pages of listings for a slug."""
+def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple[list[dict], list[str]]:
+    """Fetch listings via _next/data SSR endpoint. Returns (listings, errors)."""
     all_listings = []
-    url = build_rent_url(slug, 1)
-    seen_urls = set()
+    errors = []
 
-    for page_num in range(1, max_pages + 1):
-        if url in seen_urls:
+    if progress_cb:
+        progress_cb("🔑 Getting site build ID...")
+
+    build_id = get_build_id()
+    if not build_id:
+        return [], ["❌ Could not fetch SPEEDHOME build ID. Check your internet connection."]
+
+    if progress_cb:
+        progress_cb(f"✅ Build ID: {build_id}")
+
+    page = 1
+    while page <= max_pages:
+        if progress_cb:
+            progress_cb(f"📡 Fetching page {page}...")
+
+        props = fetch_next_data(slug, page=page, build_id=build_id)
+
+        if props is None:
+            errors.append(f"❌ Page {page}: Failed to fetch — the area slug may be incorrect or the page doesn't exist.")
             break
-        seen_urls.add(url)
+
+        prop_list = props.get("propertyList", {})
+        content   = prop_list.get("content", [])
+
+        if not content:
+            if page == 1:
+                errors.append(
+                    f"⚠️ No listings found for **/{slug}/**. "
+                    "Try a broader area name or paste the exact SPEEDHOME URL."
+                )
+            break
+
+        for item in content:
+            listing = normalize_listing(item)
+            all_listings.append(listing)
+
+        total_pages = prop_list.get("totalPages", 1)
+        total_elements = prop_list.get("totalElements", len(all_listings))
 
         if progress_cb:
-            progress_cb(f"Fetching page {page_num}...")
+            progress_cb(f"✅ Got {len(all_listings)} of {total_elements} listings...")
 
-        listings, next_url = scrape_page(url)
-        all_listings.extend(listings)
-
-        if not next_url or not listings:
+        if page >= total_pages:
             break
 
-        url = next_url
-        time.sleep(1.5 + random.uniform(0, 0.8))  # polite delay
+        page += 1
+        time.sleep(1.2 + random.uniform(0, 0.5))
 
-    # Deduplicate by link
-    seen_links = set()
-    deduped = []
+    # Deduplicate
+    seen, deduped = set(), []
     for item in all_listings:
         key = item.get("link") or item.get("title", "")
-        if key not in seen_links:
-            seen_links.add(key)
+        if key not in seen:
+            seen.add(key)
             deduped.append(item)
 
-    return deduped
+    return deduped, errors
+
+
+def get_suggestions(query: str) -> list[str]:
+    """Static suggestions from popular areas list."""
+    q = query.lower()
+    return [a for a in POPULAR_AREAS if q in a.lower()][:6]
 
 
 # ── Analytics ──────────────────────────────────────────────────────────────────
@@ -553,6 +364,137 @@ def to_csv(listings_df: pd.DataFrame) -> bytes:
     return listings_df.to_csv(index=False).encode("utf-8")
 
 
+# ── Auto Insights ──────────────────────────────────────────────────────────────
+
+def generate_insights(listings, summary_df, area_name):
+    insights = []
+    if not listings or summary_df.empty:
+        return insights
+    monthly = summary_df[summary_df["Rent Type"] == "Monthly"]
+    if monthly.empty:
+        return insights
+    total = len(listings)
+    most_common = monthly.loc[monthly["Count"].idxmax()]
+    insights.append(
+        f"🏠 **{most_common['Room Type']}** is the most listed unit type "
+        f"({int(most_common['Count'])} units, {int(most_common['Count']/total*100)}% of listings)."
+    )
+    cheapest = monthly.loc[monthly["Min (RM)"].idxmin()]
+    insights.append(
+        f"💰 **Cheapest entry point:** {cheapest['Room Type']} from RM {int(cheapest['Min (RM)']):,}/month."
+    )
+    monthly_sqft = monthly[monthly["Avg Size (sqft)"] != "N/A"].copy()
+    if not monthly_sqft.empty:
+        monthly_sqft = monthly_sqft.copy()
+        monthly_sqft["ppsf"] = monthly_sqft["Avg Price (RM)"].astype(float) / monthly_sqft["Avg Size (sqft)"].astype(float)
+        best = monthly_sqft.loc[monthly_sqft["ppsf"].idxmin()]
+        insights.append(f"📐 **Best value per sqft:** {best['Room Type']} at RM {best['ppsf']:.2f}/sqft avg.")
+    spread_pct = ((most_common["Max (RM)"] - most_common["Min (RM)"]) / most_common["Min (RM)"]) * 100
+    insights.append(
+        f"📈 **Price spread for {most_common['Room Type']}:** "
+        f"RM {int(most_common['Min (RM)']):,} – RM {int(most_common['Max (RM)']):,} ({spread_pct:.0f}% range)."
+    )
+    furn_counts = {}
+    for item in listings:
+        f = item.get("furnishing", "Not Specified")
+        furn_counts[f] = furn_counts.get(f, 0) + 1
+    if furn_counts:
+        top_furn = max(furn_counts, key=furn_counts.get)
+        insights.append(
+            f"🛋️ **{top_furn}** dominates ({furn_counts[top_furn]} of {total} units, {int(furn_counts[top_furn]/total*100)}%)."
+        )
+    avg_fair = monthly["Fair Price (RM)"].mean()
+    avg_price = monthly["Avg Price (RM)"].mean()
+    diff_pct = ((avg_price - avg_fair) / avg_fair) * 100
+    if abs(diff_pct) > 5:
+        direction = "above" if diff_pct > 0 else "below"
+        insights.append(
+            f"⚖️ **Market avg is {abs(diff_pct):.0f}% {direction} fair price** — room to negotiate below asking."
+        )
+    return insights
+
+
+# ── Comparison Mode ────────────────────────────────────────────────────────────
+
+def render_comparison(area_a, listings_a, area_b, listings_b):
+    st.markdown('<div class="section-header">📊 Area Comparison</div>', unsafe_allow_html=True)
+    summary_a = compute_price_summary(listings_a)
+    summary_b = compute_price_summary(listings_b)
+    monthly_a = summary_a[summary_a["Rent Type"] == "Monthly"] if not summary_a.empty else pd.DataFrame()
+    monthly_b = summary_b[summary_b["Rent Type"] == "Monthly"] if not summary_b.empty else pd.DataFrame()
+
+    col_a, col_b = st.columns(2)
+    def _metrics(col, name, listings, mdf):
+        with col:
+            st.markdown(f"**{name}** — {len(listings)} listings")
+            if mdf.empty:
+                st.info("No data")
+                return
+            m1, m2 = st.columns(2)
+            m1.metric("Avg Price", f"RM {int(mdf['Avg Price (RM)'].mean()):,}")
+            m2.metric("Median", f"RM {int(mdf['Median (RM)'].mean()):,}")
+            m3, m4 = st.columns(2)
+            m3.metric("Most Listed", mdf.loc[mdf["Count"].idxmax(), "Room Type"])
+            m4.metric("Starts From", f"RM {int(mdf['Min (RM)'].min()):,}/mo")
+    _metrics(col_a, area_a, listings_a, monthly_a)
+    _metrics(col_b, area_b, listings_b, monthly_b)
+
+    room_order = ["Studio", "1BR", "2BR", "3BR", "4BR", "5BR"]
+    all_rooms = sorted(
+        set(monthly_a["Room Type"].tolist() + monthly_b["Room Type"].tolist()),
+        key=lambda x: room_order.index(x) if x in room_order else 99,
+    )
+    comp_rows = []
+    for room in all_rooms:
+        ra = monthly_a[monthly_a["Room Type"] == room]
+        rb = monthly_b[monthly_b["Room Type"] == room]
+        avg_a = int(ra["Avg Price (RM)"].values[0]) if not ra.empty else None
+        avg_b = int(rb["Avg Price (RM)"].values[0]) if not rb.empty else None
+        cnt_a = int(ra["Count"].values[0]) if not ra.empty else 0
+        cnt_b = int(rb["Count"].values[0]) if not rb.empty else 0
+        if avg_a and avg_b:
+            diff = avg_b - avg_a
+            diff_str = f"+RM {diff:,}" if diff > 0 else f"-RM {abs(diff):,}"
+            cheaper = area_a if avg_a < avg_b else area_b
+        else:
+            diff_str, cheaper = "N/A", "N/A"
+        comp_rows.append({
+            "Room Type": room,
+            f"{area_a} Avg": f"RM {avg_a:,}" if avg_a else "-",
+            f"{area_a} Units": cnt_a,
+            f"{area_b} Avg": f"RM {avg_b:,}" if avg_b else "-",
+            f"{area_b} Units": cnt_b,
+            "Difference": diff_str,
+            "Cheaper": cheaper,
+        })
+    if comp_rows:
+        st.markdown("**Price by Room Type**")
+        comp_df = pd.DataFrame(comp_rows)
+        # Using AgGrid for visual uniformity in comparison view
+        gb_comp = GridOptionsBuilder.from_dataframe(comp_df)
+        gb_comp.configure_default_column(sortable=True, filter=True, resizable=True)
+        grid_options_comp = gb_comp.build()
+        AgGrid(
+            comp_df,
+            gridOptions=grid_options_comp,
+            use_container_width=True,
+            theme="alpine",
+            height=250
+        )
+
+    chart_data = {}
+    for room in all_rooms:
+        ra = monthly_a[monthly_a["Room Type"] == room]
+        rb = monthly_b[monthly_b["Room Type"] == room]
+        if not ra.empty:
+            chart_data.setdefault(area_a, {})[room] = ra["Avg Price (RM)"].values[0]
+        if not rb.empty:
+            chart_data.setdefault(area_b, {})[room] = rb["Avg Price (RM)"].values[0]
+    if chart_data:
+        st.markdown("**Avg Monthly Rent — Side by Side**")
+        st.bar_chart(pd.DataFrame(chart_data, index=all_rooms).fillna(0))
+
+
 # ── UI helpers ─────────────────────────────────────────────────────────────────
 
 def badge(label: str, category: str) -> str:
@@ -641,31 +583,55 @@ def main():
     )
 
     # ── Input Section ──────────────────────────────────────────────────────────
+    # State init
+    if "typed_query" not in st.session_state:
+        st.session_state["typed_query"] = ""
+    if "do_search" not in st.session_state:
+        st.session_state["do_search"] = False
+
+    def _on_type():
+        st.session_state["typed_query"] = st.session_state.get("_type_shadow", "")
+
+    def _on_enter():
+        st.session_state["typed_query"] = st.session_state.get("_type_shadow", "")
+        st.session_state["do_search"] = True
+
+    typed = st.session_state["typed_query"]
+
+    # Build dropdown options from what user has typed
+    if typed and not typed.startswith("http") and len(typed) >= 1:
+        suggestions = get_suggestions(typed)
+        options = [typed] + [s for s in suggestions if s.lower() != typed.lower()]
+    elif typed.startswith("http"):
+        options = [typed]
+    else:
+        options = [""]
+
     col_inp, col_btn = st.columns([4, 1])
+
     with col_inp:
-        query = st.text_input(
-            "Search area / apartment name or paste SPEEDHOME URL",
-            placeholder="e.g. Mont Kiara  or  https://speedhome.com/rent/mont-kiara",
+        st.text_input(
+            "Search",
+            value=typed,
+            placeholder="Type area name or paste SPEEDHOME URL and press Enter...",
             label_visibility="collapsed",
-            key="main_query",
+            key="_type_shadow",
+            on_change=_on_enter,
         )
+
+        if len(options) > 1:
+            st.markdown("<small style='color:#888'>Suggestions — click to search instantly:</small>", unsafe_allow_html=True)
+            sug_cols = st.columns(min(len(options) - 1, 4))
+            for i, sug in enumerate(options[1:5]):
+                if sug_cols[i % 4].button(sug, key=f"sug_{i}"):
+                    st.session_state["typed_query"] = sug
+                    st.session_state["do_search"] = True
+                    st.rerun()
 
     with col_btn:
         search_clicked = st.button("🔍 Search", use_container_width=True, type="primary")
 
-    # Autocomplete suggestions
-    if query and not query.startswith("http") and len(query) >= 2:
-        suggestions = get_suggestions(query)
-        if suggestions:
-            st.markdown(
-                "<small style='color:#888'>Suggestions (click to copy):</small>",
-                unsafe_allow_html=True,
-            )
-            sug_cols = st.columns(min(len(suggestions), 4))
-            for i, sug in enumerate(suggestions[:4]):
-                if sug_cols[i % 4].button(sug, key=f"sug_{i}"):
-                    st.session_state["main_query"] = sug
-                    st.rerun()
+    query = st.session_state["typed_query"]
 
     st.markdown(
         '<div class="info-note">ℹ️ Data is scraped directly from public SPEEDHOME.com listings in real-time. '
@@ -673,9 +639,23 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # ── Trigger search ─────────────────────────────────────────────────────────
-    if search_clicked and query:
-        # Determine slug
+    should_search = (search_clicked or st.session_state.pop("do_search", False)) and query
+
+    with st.sidebar:
+        st.header("⚙️ Settings")
+        max_pages = st.slider("Max pages to fetch", 1, 10, 3)
+        st.caption("More pages = more data but slower.")
+        st.markdown("---")
+        st.subheader("🔀 Compare Areas")
+        compare_area = st.text_input(
+            "Compare with another area",
+            placeholder="e.g. Bangsar",
+            key="compare_input",
+            help="First search an area above, then enter a second area here to compare.",
+        )
+        compare_clicked = st.button("Compare", use_container_width=True, key="compare_btn")
+
+    if should_search:
         if query.startswith("http"):
             slug = extract_slug_from_url(query)
             area_name = slug.replace("-", " ").title() if slug else query
@@ -685,142 +665,154 @@ def main():
 
         if not slug:
             st.error("Could not parse URL. Please enter a valid SPEEDHOME URL or area name.")
-            return
+        else:
+            status_ph = st.empty()
+            prog = st.progress(0)
+            with st.spinner(f"Fetching listings for **{area_name}**..."):
+                listings, fetch_errors = fetch_all_listings(slug, max_pages=max_pages, progress_cb=lambda m: status_ph.info(m))
+            prog.empty()
+            status_ph.empty()
 
-        # Max pages control in sidebar
-        with st.sidebar:
-            st.header("Settings")
-            max_pages = st.slider("Max pages to fetch", 1, 10, 3)
-            st.caption("More pages = more data but slower. Start with 3.")
+            st.session_state["results"] = {
+                "listings": listings,
+                "area_name": area_name,
+                "fetch_errors": fetch_errors,
+            }
+            st.session_state.pop("compare_results", None)
 
-        status_placeholder = st.empty()
-        progress_bar = st.progress(0)
+    results = st.session_state.get("results")
+    if not results:
+        return
 
-        def update_progress(msg):
-            status_placeholder.info(msg)
+    listings    = results["listings"]
+    area_name   = results["area_name"]
+    fetch_errors = results["fetch_errors"]
 
-        with st.spinner(f"Fetching listings for **{area_name}**..."):
-            listings = fetch_all_listings(
-                slug,
-                max_pages=max_pages,
-                progress_cb=update_progress,
-            )
+    if fetch_errors:
+        with st.expander("🔍 Fetch Diagnostics", expanded=not listings):
+            for err in fetch_errors:
+                st.markdown(err)
 
-        progress_bar.empty()
-        status_placeholder.empty()
+    if not listings:
+        st.error(f"**No listings retrieved for '{area_name}'.**")
+        st.info("💡 Try pasting the exact SPEEDHOME URL, e.g. https://speedhome.com/rent/mont-kiara")
+        return
 
-        if not listings:
-            st.error(
-                f"No listings found for **{area_name}**. "
-                "This could mean the area has no active listings, "
-                "the page uses heavy JavaScript rendering, or the slug is incorrect.\n\n"
-                "Try pasting the exact SPEEDHOME URL instead."
-            )
-            return
+    st.success(f"Found **{len(listings)}** listings for **{area_name}**")
 
-        # ── Results Header ─────────────────────────────────────────────────────
-        st.success(f"Found **{len(listings)}** listings for **{area_name}**")
+    summary_df  = compute_price_summary(listings)
+    listings_df = build_listings_df(listings, area_name)
 
-        summary_df = compute_price_summary(listings)
-        listings_df = build_listings_df(listings, area_name)
+    insights = generate_insights(listings, summary_df, area_name)
+    if insights:
+        with st.expander("💡 Auto Insights", expanded=True):
+            for insight in insights:
+                st.markdown(f"- {insight}")
 
-        # ── Price Summary Cards ────────────────────────────────────────────────
-        render_summary_table(summary_df)
+    if compare_clicked and compare_area.strip():
+        compare_slug = slugify(compare_area.strip())
+        compare_name = compare_area.strip().title()
+        with st.spinner(f"Fetching listings for **{compare_name}**..."):
+            compare_listings, _ = fetch_all_listings(compare_slug, max_pages=max_pages)
+        if compare_listings:
+            st.session_state["compare_results"] = {"listings": compare_listings, "name": compare_name}
+        else:
+            st.warning(f"No listings found for **{compare_name}**.")
+            st.session_state.pop("compare_results", None)
 
-        # ── Chart ─────────────────────────────────────────────────────────────
-        if not summary_df.empty:
-            render_chart(summary_df)
+    if "compare_results" in st.session_state:
+        cr = st.session_state["compare_results"]
+        render_comparison(area_name, listings, cr["name"], cr["listings"])
+        return
 
-        # ── Full Listings Table ────────────────────────────────────────────────
-        st.markdown('<div class="section-header">All Listings</div>', unsafe_allow_html=True)
+    render_summary_table(summary_df)
 
-        # Filters
-        f1, f2, f3 = st.columns(3)
-        with f1:
-            room_opts = ["All"] + sorted(listings_df["Room Type"].dropna().unique().tolist())
-            sel_room = st.selectbox("Filter by Room Type", room_opts)
-        with f2:
-            furn_opts = ["All"] + sorted(listings_df["Furnishing"].dropna().unique().tolist())
-            sel_furn = st.selectbox("Filter by Furnishing", furn_opts)
-        with f3:
-            rent_opts = ["All"] + sorted(listings_df["Rent Type"].dropna().unique().tolist())
-            sel_rent = st.selectbox("Filter by Rent Type", rent_opts)
+    if not summary_df.empty:
+        render_chart(summary_df)
 
-        filtered = listings_df.copy()
-        if sel_room != "All":
-            filtered = filtered[filtered["Room Type"] == sel_room]
-        if sel_furn != "All":
-            filtered = filtered[filtered["Furnishing"] == sel_furn]
-        if sel_rent != "All":
-            filtered = filtered[filtered["Rent Type"] == sel_rent]
+    # ── Full Listings Table with Direct Links ─────────────────────────────────
+    st.markdown('<div class="section-header">All Listings</div>', unsafe_allow_html=True)
 
-        # Render table with clickable links
-        display_df = filtered.copy()
-        if "Link" in display_df.columns:
-            display_df["Link"] = display_df["Link"].apply(
-                lambda x: f'<a href="{x}" target="_blank">View ↗</a>' if x else ""
-            )
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        sel_room = st.selectbox("Filter by Room Type", ["All"] + sorted(listings_df["Room Type"].dropna().unique().tolist()))
+    with f2:
+        sel_furn = st.selectbox("Filter by Furnishing", ["All"] + sorted(listings_df["Furnishing"].dropna().unique().tolist()))
+    with f3:
+        sel_rent = st.selectbox("Filter by Rent Type", ["All"] + sorted(listings_df["Rent Type"].dropna().unique().tolist()))
 
-        st.dataframe(
-            filtered.drop(columns=["Link"] if "Link" in filtered.columns else []),
-            use_container_width=True,
-            height=420,
-        )
+    filtered = listings_df.copy()
+    if sel_room != "All": filtered = filtered[filtered["Room Type"] == sel_room]
+    if sel_furn != "All": filtered = filtered[filtered["Furnishing"] == sel_furn]
+    if sel_rent != "All": filtered = filtered[filtered["Rent Type"] == sel_rent]
 
-        # Show link column separately as clickable
-        if "Link" in filtered.columns and filtered["Link"].notna().any():
-            st.markdown(
-                "<small style='color:#888'>Listing links (click to verify on SPEEDHOME):</small>",
-                unsafe_allow_html=True
-            )
-            for _, row in filtered[["Title", "Link"]].head(20).iterrows():
-                if row["Link"]:
-                    st.markdown(f"- [{row['Title'][:60]}...]({row['Link']})")
+    # Convert Link values to strings to prevent formatting errors
+    filtered["Link"] = filtered["Link"].fillna("").astype(str)
 
-        # ── Downloads ─────────────────────────────────────────────────────────
-        st.markdown('<div class="section-header">Download Data</div>', unsafe_allow_html=True)
-        date_str = datetime.now().strftime("%Y%m%d")
-        file_slug = area_name.replace(" ", "_")
-        d1, d2 = st.columns(2)
+    st.caption("💡 *Click directly on **Open Listing ↗** in the View Link column below to open it instantly. You can still sort, filter, and resize columns!*")
 
-        with d1:
-            xlsx_bytes = to_excel(summary_df, listings_df, area_name)
-            st.download_button(
-                "📥 Download Excel (.xlsx)",
-                data=xlsx_bytes,
-                file_name=f"SPEEDHOME_{file_slug}_{date_str}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        with d2:
-            csv_bytes = to_csv(listings_df)
-            st.download_button(
-                "📥 Download CSV",
-                data=csv_bytes,
-                file_name=f"SPEEDHOME_{file_slug}_{date_str}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+    # Build GridOptions for AgGrid
+    gb = GridOptionsBuilder.from_dataframe(filtered)
 
-        # ── ROI Calculator (bonus feature) ────────────────────────────────────
-        with st.expander("💡 Quick ROI Calculator", expanded=False):
-            st.markdown("Estimate rental yield based on scraped data.")
-            rc1, rc2, rc3 = st.columns(3)
-            with rc1:
-                purchase_price = st.number_input("Purchase Price (RM)", value=600000, step=10000)
-            with rc2:
-                monthly_rent = st.number_input("Monthly Rent (RM)", value=2500, step=100)
-            with rc3:
-                expenses_pct = st.slider("Annual Expenses (% of price)", 0.0, 5.0, 1.5, 0.1)
-            annual_rent = monthly_rent * 12
-            annual_expenses = purchase_price * (expenses_pct / 100)
-            net_income = annual_rent - annual_expenses
-            gross_yield = (annual_rent / purchase_price) * 100
-            net_yield = (net_income / purchase_price) * 100
-            r1, r2, r3 = st.columns(3)
-            r1.metric("Gross Yield", f"{gross_yield:.2f}%")
-            r2.metric("Net Yield", f"{net_yield:.2f}%")
-            r3.metric("Annual Net Income", f"RM {net_income:,.0f}")
+    # Define custom JavaScript to render the URL column as a true 1-click clickable anchor tag
+    link_renderer = JsCode("""
+    class UrlCellRenderer {
+        init(params) {
+            this.eGui = document.createElement('a');
+            if (params.value && params.value !== "") {
+                this.eGui.innerText = 'Open Listing ↗';
+                this.eGui.setAttribute('href', params.value);
+                this.eGui.setAttribute('style', "color: #e63946; font-weight: 600; text-decoration: none; cursor: pointer;");
+                this.eGui.setAttribute('target', "_blank");
+            } else {
+                this.eGui.innerText = '-';
+            }
+        }
+        getGui() {
+            return this.eGui;
+        }
+    }
+    """)
+
+    # Apply the custom link renderer to the Link column and configure grid defaults
+    gb.configure_column("Link", headerName="View Link", cellRenderer=link_renderer, pinned="right")
+    gb.configure_default_column(sortable=True, filter=True, resizable=True)
+    grid_options = gb.build()
+
+    # Render interactive table with streamlit-aggrid
+    AgGrid(
+        filtered,
+        gridOptions=grid_options,
+        allow_unsafe_jscode=True,       # Crucial: allows JS injection for clickable links
+        theme="alpine",                # Clean professional theme
+        height=400
+    )
+
+    # ── Downloads ─────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Download Data</div>', unsafe_allow_html=True)
+    date_str  = datetime.now().strftime("%Y%m%d")
+    file_slug = area_name.replace(" ", "_")
+    d1, d2 = st.columns(2)
+    with d1:
+        st.download_button("📥 Download Excel (.xlsx)", data=to_excel(summary_df, listings_df, area_name),
+            file_name=f"SPEEDHOME_{file_slug}_{date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    with d2:
+        st.download_button("📥 Download CSV", data=to_csv(listings_df),
+            file_name=f"SPEEDHOME_{file_slug}_{date_str}.csv", mime="text/csv", use_container_width=True)
+
+    # ── ROI Calculator ────────────────────────────────────────────────────────
+    with st.expander("💡 Quick ROI Calculator", expanded=False):
+        rc1, rc2, rc3 = st.columns(3)
+        with rc1: purchase_price = st.number_input("Purchase Price (RM)", value=600000, step=10000)
+        with rc2: monthly_rent   = st.number_input("Monthly Rent (RM)", value=2500, step=100)
+        with rc3: expenses_pct   = st.slider("Annual Expenses (% of price)", 0.0, 5.0, 1.5, 0.1)
+        annual_rent = monthly_rent * 12
+        net_income  = annual_rent - purchase_price * (expenses_pct / 100)
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Gross Yield", f"{(annual_rent/purchase_price*100):.2f}%")
+        r2.metric("Net Yield",   f"{(net_income/purchase_price*100):.2f}%")
+        r3.metric("Annual Net Income", f"RM {net_income:,.0f}")
 
 
 if __name__ == "__main__":
