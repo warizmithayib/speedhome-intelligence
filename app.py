@@ -980,7 +980,7 @@ def main():
     # Convert Link values to strings to prevent formatting errors
     filtered["Link"] = filtered["Link"].fillna("").astype(str)
 
-    st.caption("💡 *Click directly on **Open Listing ↗** in the View Link column below to open it instantly. You can still sort, filter, and resize columns!*")
+    st.caption("💡 *Tap the **↗** in the Link column (pinned right) to open a listing. You can still sort, filter, and resize columns.*")
 
     # Build GridOptions for AgGrid
     gb = GridOptionsBuilder.from_dataframe(filtered)
@@ -991,9 +991,9 @@ def main():
         init(params) {
             this.eGui = document.createElement('a');
             if (params.value && params.value !== "") {
-                this.eGui.innerText = 'Open Listing ↗';
+                this.eGui.innerText = '↗';
                 this.eGui.setAttribute('href', params.value);
-                this.eGui.setAttribute('style', "color: #FF5A1F; font-weight: 600; text-decoration: none; cursor: pointer;");
+                this.eGui.setAttribute('style', "color: #FF5A1F; font-weight: 700; font-size: 1rem; text-decoration: none; cursor: pointer;");
                 this.eGui.setAttribute('target', "_blank");
             } else {
                 this.eGui.innerText = '-';
@@ -1015,8 +1015,8 @@ def main():
     gb.configure_column("Price / Day (RM)",   minWidth=110, width=120)
     gb.configure_column("Size (sqft)",        minWidth=100, width=110)
     gb.configure_column("Furnishing",         minWidth=150, width=170)
-    gb.configure_column("Link",               minWidth=130, width=140,
-                        headerName="View Link", cellRenderer=link_renderer, pinned="right")
+    gb.configure_column("Link",               minWidth=55,  width=60,
+                        headerName="Link", cellRenderer=link_renderer, pinned="right")
 
     gb.configure_default_column(sortable=True, filter=True, resizable=True, suppressSizeToFit=True)
 
