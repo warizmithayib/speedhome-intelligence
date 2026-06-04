@@ -808,7 +808,9 @@ def main():
         st.session_state["typed_query"] = st.session_state.get("_type_shadow", "")
         st.session_state["do_search"] = True
 
-    typed = st.session_state["typed_query"]
+    typed = st.session_state.get("_prefill_query") or st.session_state["typed_query"]
+    if "_prefill_query" in st.session_state:
+        del st.session_state["_prefill_query"]
 
     # Build dropdown options from what user has typed
     if typed and not typed.startswith("http") and len(typed) >= 1:
@@ -837,7 +839,7 @@ def main():
             for i, sug in enumerate(options[1:5]):
                 if sug_cols[i % 4].button(sug, key=f"sug_{i}"):
                     st.session_state["typed_query"] = sug
-                    st.session_state["_type_shadow"] = sug
+                    st.session_state["_prefill_query"] = sug
                     st.session_state["do_search"] = True
                     st.rerun()
 
