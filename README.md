@@ -124,6 +124,13 @@ When running locally, live scraping is fully active — any area on SPEEDHOME.co
 - **Pandas** - Data manipulation
 - **openpyxl** - Excel export engine
 
+## Author
+
+Built by **Muhamad Warizmi Thayib** as part of a technical assessment.  
+[LinkedIn](https://www.linkedin.com/in/warizmi) · Feel free to fork or reference for your own projects.
+
+---
+
 ## Assumptions & Notes
 - SPEEDHOME uses Next.js SSR; extracting data via the `_next/data/{build_id}` JSON structure is the most stable and performant method of listing retrieval.
 - Max 5 pages are fetched by default (configurable in the sidebar).

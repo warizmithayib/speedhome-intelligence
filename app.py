@@ -1015,7 +1015,7 @@ def main():
     gb.configure_column("Price / Day (RM)",   minWidth=110, width=120)
     gb.configure_column("Size (sqft)",        minWidth=100, width=110)
     gb.configure_column("Furnishing",         minWidth=150, width=170)
-    gb.configure_column("Link",               minWidth=55,  width=60,
+    gb.configure_column("Link",               minWidth=70,  width=75,
                         headerName="Link", cellRenderer=link_renderer, pinned="right")
 
     gb.configure_default_column(sortable=True, filter=True, resizable=True, suppressSizeToFit=True)
@@ -1064,6 +1064,23 @@ def main():
         r1.metric("Gross Yield", f"{(annual_rent/purchase_price*100):.2f}%")
         r2.metric("Net Yield",   f"{(net_income/purchase_price*100):.2f}%")
         r3.metric("Annual Net Income", f"RM {net_income:,.0f}")
+
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="margin-top: 48px; padding: 20px 0 8px; border-top: 1px solid #DDE3EC; text-align: center;">
+        <p style="color: #9AAAB8; font-size: 0.72rem; margin: 0;">
+            SPEEDHOME Price Intelligence &nbsp;·&nbsp; Built by
+            <a href="https://www.linkedin.com/in/warizmi" target="_blank"
+               style="color: #FF5A1F; text-decoration: none; font-weight: 600;">
+               Muhamad Warizmi Thayib
+            </a>
+            &nbsp;·&nbsp; Data sourced from public listings on
+            <a href="https://speedhome.com" target="_blank"
+               style="color: #FF5A1F; text-decoration: none;">SPEEDHOME.com</a>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
