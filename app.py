@@ -271,7 +271,6 @@ def safe_get(url: str, headers: dict, timeout: int = 15, use_proxy: bool = False
         st.session_state["last_fetch_error"] = f"Standard direct request failed ({e}). Switching to proxy fallback..."
 
     # 3. Both direct attempts failed or got blocked -> Route through proxy
-    st.info("🔄 Direct connection restricted by Cloudflare. Routing request through a secure web proxy...")
     return safe_get(url, headers, timeout=timeout, use_proxy=True)
 
 def slugify(text: str) -> str:
@@ -377,14 +376,11 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
 
     # ── Try live fetch first ───────────────────────────────────────────────────
     if progress_cb:
-        progress_cb("🔑 Getting site build ID...")
+        progress_cb("📡 Connecting to SPEEDHOME...")
 
     build_id = get_build_id()
 
     if build_id:
-        if progress_cb:
-            progress_cb(f"✅ Build ID: {build_id}")
-
         page = 1
         while page <= max_pages:
             if progress_cb:
@@ -393,10 +389,7 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
             props = fetch_next_data(slug, page=page, build_id=build_id)
 
             if props is None:
-                error_msg = f"❌ Page {page}: Failed to fetch — area slug may be incorrect or cloud IP is blocked."
-                if "last_fetch_error" in st.session_state:
-                    error_msg += f" (Detail: {st.session_state['last_fetch_error']})"
-                errors.append(error_msg)
+                errors.append(f"Live fetch blocked — falling back to cached data.")
                 break
 
             prop_list = props.get("propertyList", {})
@@ -406,7 +399,7 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
                 if page == 1:
                     errors.append(
                         f"⚠️ No listings found for **/{slug}/**. "
-                        "Try a broader area name or paste the exact SPEEDHOME URL."
+                        "Try a broader area name."
                     )
                 break
 
@@ -417,7 +410,7 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
             total_elements = prop_list.get("totalElements", len(all_listings))
 
             if progress_cb:
-                progress_cb(f"✅ Got {len(all_listings)} of {total_elements} listings...")
+                progress_cb(f"📡 Loading... {len(all_listings)} of {total_elements} listings")
 
             if page >= total_pages:
                 break
@@ -437,10 +430,7 @@ def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple
             return deduped, errors
 
     else:
-        error_msg = "❌ Could not fetch SPEEDHOME build ID."
-        if "last_fetch_error" in st.session_state:
-            error_msg += f" (Diagnostics: {st.session_state['last_fetch_error']})"
-        errors.append(error_msg)
+        errors.append("Live fetch unavailable — loading cached data.")
 
     # ── Fallback: load from sample_data/ ──────────────────────────────────────
     if progress_cb:
@@ -924,7 +914,7 @@ def main():
 
     if not listings:
         st.error(f"**No listings retrieved for '{area_name}'.**")
-        st.info("💡 Try pasting the exact SPEEDHOME URL, e.g. https://speedhome.com/rent/mont-kiara")
+        st.info(f"💡 On cloud, only pre-loaded areas are available. Try: Mont Kiara, Bangsar, KLCC, Petaling Jaya, Subang Jaya, Cheras, Damansara, Cyberjaya, Shah Alam, Bukit Bintang, Penang.")
         return
 
     st.success(f"Found **{len(listings)}** listings for **{area_name}**")
