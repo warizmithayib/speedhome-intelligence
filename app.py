@@ -23,57 +23,92 @@ st.set_page_config(
 # ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* Global */
-html, body, [data-testid="stAppViewContainer"] { background: #f7f9fc; }
-h1 { font-size: 1.8rem !important; }
+/* ── Global ── */
+html, body, [data-testid="stAppViewContainer"] {
+    background: #F2F4F8 !important;
+}
+h1 { font-size: 1.6rem !important; }
 
-/* Cards */
+/* ── App header banner ── */
+.app-header {
+    background: #0F1923;
+    margin: -1rem -1rem 1.5rem -1rem;
+    padding: 22px 28px 18px;
+    display: flex; align-items: center; gap: 14px;
+    border-bottom: 2px solid #FF5A1F;
+}
+.app-header-icon { font-size: 2rem; line-height: 1; }
+.app-header-title { color: #FFFFFF; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.3px; margin: 0; }
+.app-header-sub { color: #7A8FA6; font-size: 0.73rem; text-transform: uppercase; letter-spacing: 0.6px; margin-top: 3px; }
+
+/* ── Metric cards ── */
 .metric-card {
-    background: white;
-    border-radius: 12px;
-    padding: 18px 22px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.08);
-    text-align: center;
+    background: #FFFFFF;
+    border: 1px solid #DDE3EC;
+    border-top: 3px solid #FF5A1F;
+    border-radius: 10px;
+    padding: 16px 18px;
+    text-align: left;
 }
-.metric-label { font-size: .75rem; color: #888; text-transform: uppercase; letter-spacing:.5px; margin-bottom:4px; }
-.metric-value { font-size: 1.5rem; font-weight: 700; color: #1a1a2e; }
-.metric-sub   { font-size: .78rem; color: #555; margin-top:2px; }
+.metric-label {
+    font-size: .68rem; font-weight: 700;
+    color: #7A8FA6; text-transform: uppercase;
+    letter-spacing: .7px; margin-bottom: 8px;
+}
+.metric-value {
+    font-size: 1.45rem; font-weight: 700;
+    color: #0F1923; line-height: 1;
+}
+.metric-sub {
+    font-size: .71rem; color: #9AAAB8; margin-top: 4px;
+}
 
-/* Badge */
+/* ── Badges ── */
 .badge {
-    display:inline-block; padding:2px 9px; border-radius:20px;
-    font-size:.72rem; font-weight:600;
+    display: inline-block; padding: 2px 9px;
+    border-radius: 20px; font-size: .68rem; font-weight: 700;
 }
-.badge-monthly  { background:#e8f4fd; color:#1565c0; }
-.badge-daily    { background:#fce8e8; color:#c62828; }
-.badge-yearly   { background:#e8f5e9; color:#2e7d32; }
-.badge-ff       { background:#e8f4fd; color:#1565c0; }
-.badge-pf       { background:#fff3e0; color:#e65100; }
-.badge-unf      { background:#f3e5f5; color:#6a1b9a; }
+.badge-monthly  { background: #EBF1FF; color: #2C55C5; }
+.badge-daily    { background: #FFF0EB; color: #C44A10; }
+.badge-yearly   { background: #EDFAF4; color: #1A7A47; }
+.badge-ff       { background: #EBF1FF; color: #2C55C5; }
+.badge-pf       { background: #FFF7EB; color: #A05C00; }
+.badge-unf      { background: #F4EEFF; color: #6930C3; }
 
-/* Table tweaks */
-.stDataFrame thead th { background:#1a1a2e !important; color:white !important; }
-div[data-testid="stDataFrame"] { border-radius:10px; overflow:hidden; }
-
-/* Search box */
-.search-container input { border-radius: 8px !important; }
-
-/* Section header */
+/* ── Section headers ── */
 .section-header {
-    font-size:1.1rem; font-weight:700; color:#1a1a2e;
-    border-left: 4px solid #e63946; padding-left:10px;
-    margin: 22px 0 12px;
+    font-size: .68rem; font-weight: 700;
+    color: #7A8FA6; text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 24px 0 12px;
+    display: flex; align-items: center; gap: 10px;
+}
+.section-header::after {
+    content: ''; flex: 1; height: 1px; background: #DDE3EC;
 }
 
-/* Alert */
+/* ── Info note ── */
 .info-note {
-    background:#fff8e1; border-left:4px solid #ffc107;
-    padding: 10px 14px; border-radius:6px; font-size:.85rem; color:#555;
-    margin-bottom:12px;
+    background: #EBF1FF;
+    border-left: 3px solid #3B6FE8;
+    border-radius: 0 8px 8px 0;
+    padding: 9px 14px;
+    font-size: .78rem; color: #2C4FA8;
+    margin-bottom: 14px;
 }
 
-/* Spinner overlay */
-.loading-text { font-size: 1rem; color: #555; margin-top: 12px; }
+/* ── Table tweaks ── */
+.stDataFrame thead th { background: #0F1923 !important; color: #FFFFFF !important; font-size: .72rem !important; text-transform: uppercase; letter-spacing: .5px; }
+div[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; border: 1px solid #DDE3EC; }
+
+/* ── Streamlit overrides ── */
+[data-testid="stMetric"] { background: #FFFFFF; border: 1px solid #DDE3EC; border-top: 3px solid #FF5A1F; border-radius: 10px; padding: 14px 16px; }
+.stButton > button[kind="primary"] { background: #FF5A1F !important; border: none !important; font-weight: 600; }
+.stButton > button[kind="primary"]:hover { background: #E04A12 !important; }
+.stExpander { border: 1px solid #DDE3EC !important; border-radius: 10px !important; background: #fff; }
+
+/* ── Loading text ── */
+.loading-text { font-size: 1rem; color: #7A8FA6; margin-top: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -733,7 +768,7 @@ def render_chart(df: pd.DataFrame):
         return
     st.markdown('<div class="section-header">Average Monthly Rent by Room Type</div>', unsafe_allow_html=True)
     chart_data = sub.set_index("Room Type")["Avg Price (RM)"]
-    st.bar_chart(chart_data, color="#e63946")
+    st.bar_chart(chart_data, color="#FF5A1F")
 
 
 # ── Main UI ────────────────────────────────────────────────────────────────────
@@ -741,14 +776,13 @@ def render_chart(df: pd.DataFrame):
 def main():
     st.markdown(
         """
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
-          <span style="font-size:2.2rem">🏠</span>
+        <div class="app-header">
+          <div class="app-header-icon">🏠</div>
           <div>
-            <h1 style="margin:0;color:#1a1a2e;">SPEEDHOME Price Intelligence</h1>
-            <p style="margin:0;color:#777;font-size:.9rem;">Real-time rental market data from SPEEDHOME.com · Malaysia</p>
+            <div class="app-header-title">SPEEDHOME Price Intelligence</div>
+            <div class="app-header-sub">Rental market analytics · Malaysia</div>
           </div>
         </div>
-        <hr style="margin:12px 0 20px;border:none;border-top:2px solid #e63946;opacity:.4">
         """,
         unsafe_allow_html=True,
     )
