@@ -1066,7 +1066,8 @@ def main():
         r3.metric("Annual Net Income", f"RM {net_income:,.0f}")
 
 
-    # ── Footer ────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    main()
     st.markdown("""
     <div style="margin-top: 48px; padding: 20px 0 8px; border-top: 1px solid #DDE3EC; text-align: center;">
         <p style="color: #9AAAB8; font-size: 0.72rem; margin: 0;">
@@ -1081,7 +1082,3 @@ def main():
         </p>
     </div>
     """, unsafe_allow_html=True)
-
-
-if __name__ == "__main__":
-    main()
