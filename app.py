@@ -111,6 +111,55 @@ FURNISH_MAP = {
 # Cached build ID so we only fetch it once per session
 _BUILD_ID: str | None = None
 
+# ── Sample data fallback (for Streamlit Cloud deployment) ──────────────────────
+
+SAMPLE_DATA_DIR = "sample_data"
+
+def load_sample_data(slug: str) -> tuple[list[dict], str | None]:
+    """
+    Load pre-scraped listings from sample_data/<slug>.json.
+    Returns (listings, scraped_at) or ([], None) if not found.
+    """
+    import os, json
+    path = os.path.join(SAMPLE_DATA_DIR, f"{slug}.json")
+    if not os.path.exists(path):
+        # Try fuzzy match: first slug token contained in filename
+        prefix = slug.split("-")[0]
+        candidates = [f for f in os.listdir(SAMPLE_DATA_DIR)
+                      if f.endswith(".json") and not f.startswith("_") and prefix in f]
+        if candidates:
+            path = os.path.join(SAMPLE_DATA_DIR, candidates[0])
+        else:
+            return [], None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload.get("listings", []), payload.get("scraped_at")
+    except Exception:
+        return [], None
+
+
+def get_available_sample_areas() -> list[dict]:
+    """Return list of areas available in sample_data/_index.json."""
+    import os, json
+    index_path = os.path.join(SAMPLE_DATA_DIR, "_index.json")
+    if not os.path.exists(index_path):
+        return []
+    try:
+        with open(index_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("areas", [])
+    except Exception:
+        return []
+
+
+def is_cloud_environment() -> bool:
+    """Detect if running on Streamlit Cloud (or any non-local environment)."""
+    import os
+    # Streamlit Cloud sets this env variable
+    return os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit" \
+        or os.environ.get("IS_STREAMLIT_CLOUD", "").lower() == "true" \
+        or "/mount/src/" in os.environ.get("HOME", "")
+
 # ── Core helpers ───────────────────────────────────────────────────────────────
 
 class MockResponse:
@@ -281,73 +330,103 @@ def normalize_listing(item: dict) -> dict:
     }
 
 def fetch_all_listings(slug: str, max_pages: int = 5, progress_cb=None) -> tuple[list[dict], list[str]]:
-    """Fetch listings via _next/data SSR endpoint. Returns (listings, errors)."""
+    """
+    Fetch listings via _next/data SSR endpoint.
+    On Streamlit Cloud (or when live fetch fails), automatically falls back
+    to pre-scraped sample data from sample_data/<slug>.json.
+    Returns (listings, errors).
+    """
     all_listings = []
     errors = []
 
+    # ── Try live fetch first ───────────────────────────────────────────────────
     if progress_cb:
         progress_cb("🔑 Getting site build ID...")
 
     build_id = get_build_id()
-    if not build_id:
-        error_msg = "❌ Could not fetch SPEEDHOME build ID. Check your internet connection."
+
+    if build_id:
+        if progress_cb:
+            progress_cb(f"✅ Build ID: {build_id}")
+
+        page = 1
+        while page <= max_pages:
+            if progress_cb:
+                progress_cb(f"📡 Fetching page {page}...")
+
+            props = fetch_next_data(slug, page=page, build_id=build_id)
+
+            if props is None:
+                error_msg = f"❌ Page {page}: Failed to fetch — area slug may be incorrect or cloud IP is blocked."
+                if "last_fetch_error" in st.session_state:
+                    error_msg += f" (Detail: {st.session_state['last_fetch_error']})"
+                errors.append(error_msg)
+                break
+
+            prop_list = props.get("propertyList", {})
+            content   = prop_list.get("content", [])
+
+            if not content:
+                if page == 1:
+                    errors.append(
+                        f"⚠️ No listings found for **/{slug}/**. "
+                        "Try a broader area name or paste the exact SPEEDHOME URL."
+                    )
+                break
+
+            for item in content:
+                all_listings.append(normalize_listing(item))
+
+            total_pages    = prop_list.get("totalPages", 1)
+            total_elements = prop_list.get("totalElements", len(all_listings))
+
+            if progress_cb:
+                progress_cb(f"✅ Got {len(all_listings)} of {total_elements} listings...")
+
+            if page >= total_pages:
+                break
+
+            page += 1
+            time.sleep(1.2 + random.uniform(0, 0.5))
+
+        # Deduplicate
+        seen, deduped = set(), []
+        for item in all_listings:
+            key = item.get("link") or item.get("title", "")
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+
+        if deduped:
+            return deduped, errors
+
+    else:
+        error_msg = "❌ Could not fetch SPEEDHOME build ID."
         if "last_fetch_error" in st.session_state:
             error_msg += f" (Diagnostics: {st.session_state['last_fetch_error']})"
-        return [], [error_msg]
+        errors.append(error_msg)
 
+    # ── Fallback: load from sample_data/ ──────────────────────────────────────
     if progress_cb:
-        progress_cb(f"✅ Build ID: {build_id}")
+        progress_cb("📂 Loading cached sample data...")
 
-    page = 1
-    while page <= max_pages:
-        if progress_cb:
-            progress_cb(f"📡 Fetching page {page}...")
+    sample_listings, scraped_at = load_sample_data(slug)
 
-        props = fetch_next_data(slug, page=page, build_id=build_id)
+    if sample_listings:
+        scraped_date = scraped_at[:10] if scraped_at else "unknown date"
+        errors.append(
+            f"⚠️ **Live data unavailable** — showing cached sample data "
+            f"({len(sample_listings)} listings, scraped {scraped_date}). "
+            f"All analytics features are fully functional."
+        )
+        return sample_listings, errors
 
-        if props is None:
-            error_msg = f"❌ Page {page}: Failed to fetch — the area slug may be incorrect, or the cloud IP is rate-limited."
-            if "last_fetch_error" in st.session_state:
-                error_msg += f" (Detail: {st.session_state['last_fetch_error']})"
-            errors.append(error_msg)
-            break
-
-        prop_list = props.get("propertyList", {})
-        content   = prop_list.get("content", [])
-
-        if not content:
-            if page == 1:
-                errors.append(
-                    f"⚠️ No listings found for **/{slug}/**. "
-                    "Try a broader area name or paste the exact SPEEDHOME URL."
-                )
-            break
-
-        for item in content:
-            listing = normalize_listing(item)
-            all_listings.append(listing)
-
-        total_pages = prop_list.get("totalPages", 1)
-        total_elements = prop_list.get("totalElements", len(all_listings))
-
-        if progress_cb:
-            progress_cb(f"✅ Got {len(all_listings)} of {total_elements} listings...")
-
-        if page >= total_pages:
-            break
-
-        page += 1
-        time.sleep(1.2 + random.uniform(0, 0.5))
-
-    # Deduplicate
-    seen, deduped = set(), []
-    for item in all_listings:
-        key = item.get("link") or item.get("title", "")
-        if key not in seen:
-            seen.add(key)
-            deduped.append(item)
-
-    return deduped, errors
+    # No live data AND no sample data
+    errors.append(
+        f"❌ No cached data available for **{slug}**. "
+        f"Available areas: {', '.join(a['area_name'] for a in get_available_sample_areas()) or 'none'}."
+    )
+    return [], errors
 
 
 def get_suggestions(query: str) -> list[str]:
@@ -724,11 +803,24 @@ def main():
 
     query = st.session_state["typed_query"]
 
-    st.markdown(
-        '<div class="info-note">ℹ️ Data is scraped directly from public SPEEDHOME.com listings in real-time. '
-        'Requests are rate-limited and robots.txt is respected.</div>',
-        unsafe_allow_html=True,
-    )
+    # Show different info note depending on environment
+    available_areas = get_available_sample_areas()
+    if available_areas:
+        area_names = ", ".join(a["area_name"] for a in available_areas[:5])
+        if len(available_areas) > 5:
+            area_names += f" +{len(available_areas) - 5} more"
+        st.markdown(
+            f'<div class="info-note">ℹ️ Live data is fetched directly from SPEEDHOME.com when available. '
+            f'On cloud deployment, cached sample data is used as fallback. '
+            f'Pre-loaded areas: <b>{area_names}</b>.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="info-note">ℹ️ Data is scraped directly from public SPEEDHOME.com listings in real-time. '
+            'Requests are rate-limited and robots.txt is respected.</div>',
+            unsafe_allow_html=True,
+        )
 
     should_search = (search_clicked or st.session_state.pop("do_search", False)) and query
 
