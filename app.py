@@ -800,17 +800,15 @@ def main():
         st.session_state["typed_query"] = ""
     if "do_search" not in st.session_state:
         st.session_state["do_search"] = False
+    if "input_key" not in st.session_state:
+        st.session_state["input_key"] = 0
 
-    def _on_type():
-        st.session_state["typed_query"] = st.session_state.get("_type_shadow", "")
+    # Current display value — set by suggestion click or user typing
+    typed = st.session_state["typed_query"]
 
     def _on_enter():
-        st.session_state["typed_query"] = st.session_state.get("_type_shadow", "")
+        st.session_state["typed_query"] = st.session_state.get(f"_type_shadow_{st.session_state['input_key']}", "")
         st.session_state["do_search"] = True
-
-    typed = st.session_state.get("_prefill_query") or st.session_state["typed_query"]
-    if "_prefill_query" in st.session_state:
-        del st.session_state["_prefill_query"]
 
     # Build dropdown options from what user has typed
     if typed and not typed.startswith("http") and len(typed) >= 1:
@@ -824,12 +822,14 @@ def main():
     col_inp, col_btn = st.columns([4, 1])
 
     with col_inp:
+        # Using a versioned key forces Streamlit to treat it as a new widget
+        # when input_key increments, so value= is respected
         st.text_input(
             "Search",
             value=typed,
             placeholder="Type area name or paste SPEEDHOME URL and press Enter...",
             label_visibility="collapsed",
-            key="_type_shadow",
+            key=f"_type_shadow_{st.session_state['input_key']}",
             on_change=_on_enter,
         )
 
@@ -839,7 +839,7 @@ def main():
             for i, sug in enumerate(options[1:5]):
                 if sug_cols[i % 4].button(sug, key=f"sug_{i}"):
                     st.session_state["typed_query"] = sug
-                    st.session_state["_prefill_query"] = sug
+                    st.session_state["input_key"] += 1  # forces text_input to re-render with new value
                     st.session_state["do_search"] = True
                     st.rerun()
 
