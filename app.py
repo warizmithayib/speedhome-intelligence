@@ -762,10 +762,13 @@ def render_summary_table(df: pd.DataFrame):
 
 
 def render_chart(df: pd.DataFrame):
-    """Bar chart of average prices by room type."""
+    """Bar chart of average prices by room type, ordered Studio → 1BR → 2BR → 3BR → 4BR."""
     sub = df[df["Rent Type"] == "Monthly"].copy()
     if sub.empty or "Avg Price (RM)" not in sub.columns:
         return
+    order = ["Studio", "1BR", "2BR", "3BR", "4BR", "5BR", "Unknown"]
+    sub["_order"] = sub["Room Type"].apply(lambda x: order.index(x) if x in order else 99)
+    sub = sub.sort_values("_order").drop(columns=["_order"])
     st.markdown('<div class="section-header">Average Monthly Rent by Room Type</div>', unsafe_allow_html=True)
     chart_data = sub.set_index("Room Type")["Avg Price (RM)"]
     st.bar_chart(chart_data, color="#FF5A1F")
@@ -847,7 +850,7 @@ def main():
         st.markdown(
             f'<div class="info-note">ℹ️ Live data is fetched directly from SPEEDHOME.com when available. '
             f'On cloud deployment, cached sample data is used as fallback. '
-            f'Pre-loaded areas: <b>{area_names}</b>.</div>',
+            f'Pre-loaded areas: <b>{area_names}</b>. Requests are rate-limited and robots.txt is respected.</div>',
             unsafe_allow_html=True,
         )
     else:
@@ -870,6 +873,7 @@ def main():
             placeholder="e.g. Bangsar",
             key="compare_input",
             help="First search an area above, then enter a second area here to compare.",
+            on_change=lambda: st.session_state.update({"do_compare": True}),
         )
         compare_clicked = st.button("Compare", use_container_width=True, key="compare_btn")
 
@@ -921,7 +925,7 @@ def main():
     summary_df  = compute_price_summary(listings)
     listings_df = build_listings_df(listings, area_name)
 
-    is_comparing = "compare_results" in st.session_state or (compare_clicked and compare_area.strip())
+    is_comparing = "compare_results" in st.session_state or (compare_clicked and compare_area.strip()) or (st.session_state.get("do_compare") and compare_area.strip())
     if not is_comparing:
         insights = generate_insights(listings, summary_df, area_name)
         if insights:
@@ -929,7 +933,7 @@ def main():
                 for insight in insights:
                     st.markdown(f"- {insight}")
 
-    if compare_clicked and compare_area.strip():
+    if (compare_clicked or st.session_state.pop("do_compare", False)) and compare_area.strip():
         compare_slug = slugify(compare_area.strip())
         compare_name = compare_area.strip().title()
         with st.spinner(f"Fetching listings for **{compare_name}**..."):
@@ -945,10 +949,10 @@ def main():
         render_comparison(area_name, listings, cr["name"], cr["listings"])
         return
 
-    render_summary_table(summary_df)
-
     if not summary_df.empty:
         render_chart(summary_df)
+
+    render_summary_table(summary_df)
 
     # ── Full Listings Table with Direct Links ─────────────────────────────────
     st.markdown('<div class="section-header">All Listings</div>', unsafe_allow_html=True)
