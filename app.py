@@ -99,6 +99,7 @@ POPULAR_AREAS = [
     "Desa Parkcity", "KL City Centre", "Jalan Ipoh", "Sentul",
     "Titiwangsa", "Setiawangsa", "Taman Tun Dr Ismail", "TTDI",
     "Pavilion Residences", "The Troika", "Solaris Mont Kiara",
+    "Penang", "Georgetown", "Bayan Lepas", "Jelutong", "Tanjung Tokong",
 ]
 
 FURNISH_MAP = {
@@ -886,11 +887,13 @@ def main():
     summary_df  = compute_price_summary(listings)
     listings_df = build_listings_df(listings, area_name)
 
-    insights = generate_insights(listings, summary_df, area_name)
-    if insights:
-        with st.expander("💡 Auto Insights", expanded=True):
-            for insight in insights:
-                st.markdown(f"- {insight}")
+    is_comparing = "compare_results" in st.session_state or (compare_clicked and compare_area.strip())
+    if not is_comparing:
+        insights = generate_insights(listings, summary_df, area_name)
+        if insights:
+            with st.expander("💡 Auto Insights", expanded=True):
+                for insight in insights:
+                    st.markdown(f"- {insight}")
 
     if compare_clicked and compare_area.strip():
         compare_slug = slugify(compare_area.strip())

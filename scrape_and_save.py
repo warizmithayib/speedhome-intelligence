@@ -70,6 +70,7 @@ AREAS_TO_SCRAPE = [
     ("Cyberjaya",     "cyberjaya"),
     ("Shah Alam",     "shah-alam"),
     ("Bukit Bintang", "bukit-bintang"),
+    ("Penang",        "penang"),
 ]
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
