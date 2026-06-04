@@ -768,9 +768,13 @@ def render_chart(df: pd.DataFrame):
         return
     order = ["Studio", "1BR", "2BR", "3BR", "4BR", "5BR", "Unknown"]
     sub["_order"] = sub["Room Type"].apply(lambda x: order.index(x) if x in order else 99)
-    sub = sub.sort_values("_order").drop(columns=["_order"])
+    sub = sub.sort_values("_order").drop(columns=["_order"]).reset_index(drop=True)
+    # Use a list-indexed DataFrame to force st.bar_chart to respect insertion order
+    chart_data = pd.DataFrame(
+        {"Avg Price (RM)": sub["Avg Price (RM)"].values},
+        index=pd.CategoricalIndex(sub["Room Type"].values, categories=sub["Room Type"].values, ordered=True)
+    )
     st.markdown('<div class="section-header">Average Monthly Rent by Room Type</div>', unsafe_allow_html=True)
-    chart_data = sub.set_index("Room Type")["Avg Price (RM)"]
     st.bar_chart(chart_data, color="#FF5A1F")
 
 
@@ -833,6 +837,7 @@ def main():
             for i, sug in enumerate(options[1:5]):
                 if sug_cols[i % 4].button(sug, key=f"sug_{i}"):
                     st.session_state["typed_query"] = sug
+                    st.session_state["_type_shadow"] = sug
                     st.session_state["do_search"] = True
                     st.rerun()
 
