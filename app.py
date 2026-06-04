@@ -986,7 +986,7 @@ def main():
             if (params.value && params.value !== "") {
                 this.eGui.innerText = 'Open Listing ↗';
                 this.eGui.setAttribute('href', params.value);
-                this.eGui.setAttribute('style', "color: #e63946; font-weight: 600; text-decoration: none; cursor: pointer;");
+                this.eGui.setAttribute('style', "color: #FF5A1F; font-weight: 600; text-decoration: none; cursor: pointer;");
                 this.eGui.setAttribute('target', "_blank");
             } else {
                 this.eGui.innerText = '-';
@@ -998,18 +998,38 @@ def main():
     }
     """)
 
-    # Apply the custom link renderer to the Link column and configure grid defaults
-    gb.configure_column("Link", headerName="View Link", cellRenderer=link_renderer, pinned="right")
-    gb.configure_default_column(sortable=True, filter=True, resizable=True)
+    # Explicit column widths so nothing truncates on mobile
+    gb.configure_column("Title",              minWidth=160, width=180)
+    gb.configure_column("Area / Property",    minWidth=140, width=160)
+    gb.configure_column("Room Type",          minWidth=90,  width=100)
+    gb.configure_column("Rent Type",          minWidth=90,  width=100)
+    gb.configure_column("Price / Month (RM)", minWidth=120, width=130)
+    gb.configure_column("Price / Year (RM)",  minWidth=120, width=130)
+    gb.configure_column("Price / Day (RM)",   minWidth=110, width=120)
+    gb.configure_column("Size (sqft)",        minWidth=100, width=110)
+    gb.configure_column("Furnishing",         minWidth=150, width=170)
+    gb.configure_column("Link",               minWidth=130, width=140,
+                        headerName="View Link", cellRenderer=link_renderer, pinned="right")
+
+    gb.configure_default_column(sortable=True, filter=True, resizable=True, suppressSizeToFit=True)
+
+    # Enable horizontal scroll and suppress auto column fit to viewport width
+    gb.configure_grid_options(
+        suppressHorizontalScroll=False,
+        alwaysShowHorizontalScroll=True,
+        suppressColumnVirtualisation=False,
+    )
+
     grid_options = gb.build()
 
     # Render interactive table with streamlit-aggrid
     AgGrid(
         filtered,
         gridOptions=grid_options,
-        allow_unsafe_jscode=True,       # Crucial: allows JS injection for clickable links
-        theme="alpine",                # Clean professional theme
-        height=400
+        allow_unsafe_jscode=True,
+        theme="alpine",
+        height=420,
+        fit_columns_on_grid_load=False,   # Critical: prevents columns squishing to fit viewport
     )
 
     # ── Downloads ─────────────────────────────────────────────────────────────
