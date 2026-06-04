@@ -1,75 +1,82 @@
 {
-  "generated_at": "2026-06-04T11:52:54.353294",
+  "generated_at": "2026-06-04T12:04:03.130949",
   "areas": [
     {
       "area_name": "Mont Kiara",
       "slug": "mont-kiara",
-      "scraped_at": "2026-06-04T11:51:38.496028",
+      "scraped_at": "2026-06-04T12:02:40.613138",
       "total_listings": 67,
       "avg_price_monthly": 2107.0
     },
     {
       "area_name": "Bangsar",
       "slug": "bangsar",
-      "scraped_at": "2026-06-04T11:51:40.878920",
+      "scraped_at": "2026-06-04T12:02:43.024285",
       "total_listings": 38,
       "avg_price_monthly": 2446.0
     },
     {
       "area_name": "KLCC",
       "slug": "klcc",
-      "scraped_at": "2026-06-04T11:51:52.845499",
+      "scraped_at": "2026-06-04T12:02:54.287272",
       "total_listings": 192,
       "avg_price_monthly": 2200.0
     },
     {
       "area_name": "Petaling Jaya",
       "slug": "petaling-jaya",
-      "scraped_at": "2026-06-04T11:52:01.554403",
+      "scraped_at": "2026-06-04T12:03:03.299771",
       "total_listings": 149,
       "avg_price_monthly": 1457.0
     },
     {
       "area_name": "Subang Jaya",
       "slug": "subang-jaya",
-      "scraped_at": "2026-06-04T11:52:05.881546",
+      "scraped_at": "2026-06-04T12:03:08.548400",
       "total_listings": 53,
       "avg_price_monthly": 1503.0
     },
     {
       "area_name": "Cheras",
       "slug": "cheras",
-      "scraped_at": "2026-06-04T11:52:15.006205",
+      "scraped_at": "2026-06-04T12:03:17.828254",
       "total_listings": 146,
       "avg_price_monthly": 1813.0
     },
     {
       "area_name": "Damansara",
       "slug": "damansara",
-      "scraped_at": "2026-06-04T11:52:26.259124",
+      "scraped_at": "2026-06-04T12:03:29.079879",
       "total_listings": 187,
       "avg_price_monthly": 1535.0
     },
     {
       "area_name": "Cyberjaya",
       "slug": "cyberjaya",
-      "scraped_at": "2026-06-04T11:52:39.236387",
+      "scraped_at": "2026-06-04T12:03:43.327464",
       "total_listings": 200,
       "avg_price_monthly": 1651.0
     },
     {
       "area_name": "Shah Alam",
       "slug": "shah-alam",
-      "scraped_at": "2026-06-04T11:52:50.015043",
+      "scraped_at": "2026-06-04T12:03:54.563535",
       "total_listings": 170,
       "avg_price_monthly": 1613.0
     },
     {
       "area_name": "Bukit Bintang",
       "slug": "bukit-bintang",
-      "scraped_at": "2026-06-04T11:52:52.351438",
+      "scraped_at": "2026-06-04T12:03:56.893088",
       "total_listings": 26,
       "avg_price_monthly": 2792.0
+    },
+    {
+      "area_name": "Penang",
+      "slug": "penang",
+      "scraped_at": "2026-06-04T12:04:01.126691",
+      "total_listings": 51,
+      "avg_price_monthly": 1624.0
     }
   ]
 }
